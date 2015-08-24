@@ -1,0 +1,18 @@
+{
+  "name": "integration-fse",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "promised-io": "^0.3.5",
+    "node-rest-client": "^1.4.4",
+    "integration-common": "https://github.com/rpmsoftware/integration-common.git#0.0.7",
+    "integration-web": "https://github.com/rpmsoftware/integration-web.git#0.0.2"
+  },
+  "description": "Syncronizes changes between RPM processes",
+  "author": "Dmitriy Serdyukov",
+  "files": [ "fse.js", "config.json.sample" ," process-route.js"],
+  "license": "ISC",
+  "engines": {
+    "node": ">=0.10.x"
+  }
+}

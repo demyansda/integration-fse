@@ -1,0 +1,30 @@
+{
+    "webHooks": {
+        "port": 30000,
+        "path": "wh"
+    },
+    "subscriptions": {
+        "s1": {
+            "url": "https://vpn.rpmsoftware.com",
+            "key": "..."
+        },
+        "s2": {
+            "url": "https://vpn.rpmsoftware.com",
+            "key": "..."
+        }
+    },
+    "dataFlow": [
+        {
+            "src": {
+                "subscription": "s1",
+                "process": "Orders 1"
+            },
+            "dst": {
+                "subscription": "s2",
+                "process": "Orders 2"
+            },
+            "extraFieldMappings": {},
+            "twoWay": true
+        }
+    ]
+}
