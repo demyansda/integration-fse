@@ -24,8 +24,7 @@ function updateSubscriptionInfo() {
 }
 
 
-function init() {
-
+function initRoutes() {
 
     var apis = {};
 
@@ -71,7 +70,7 @@ function init() {
                 if (!rpmUtil.pushIfNotIn(allProcesses, result)) {
                     throw new Error('Duplicate process:', result);
                 }
-                result._linkedFormIdField = procDef.linkedFormIdField || prt.LINKED_FORM_ID_FIELD;
+                result._linkedFormIdField = procDef.linkedFormIdField;
                 return result;
             }
 
@@ -120,6 +119,7 @@ function init() {
             routes.getRoutingTree = getRoutingTree;
             routes.getApis = getApis;
             routes.sync = syncAllRoutes;
+            console.log('Routes:', routes);
             return routes;
         }
     ]);
@@ -209,13 +209,13 @@ function syncAllRoutes() {
 
 promised.seq([
     function () {
-        return init();
+        return initRoutes();
     },
-    function (routes) {
-        return promised.all(routes.sync(), routes.getRoutingTree());
+    function (result) {
+        routes = result;
+        return result.length ? promised.all(routes.sync(), routes.getRoutingTree()) : rpmUtil.getRejectedPromise('There is no routes');
     },
     function (results) {
-        routes = results[0];
         tree = results[1];
         console.log(tree);
         startWebHooksServer();
@@ -229,6 +229,8 @@ promised.seq([
     );
 
 
+
+
 function startWebHooksServer() {
 
 
@@ -239,9 +241,10 @@ function startWebHooksServer() {
         if (processing) {
             return;
         }
-        
+
         processing = true;
         var treeUpdated = false;
+
 
         function getRoute(obj) {
             var keys = [obj.Instance, obj.Subscriber, obj.ParentID]
@@ -269,7 +272,14 @@ function startWebHooksServer() {
                     return new Error('Route cannot be found for ' + JSON.stringify(obj));
                 }
                 var deferred = new Deferred();
-                obj.EventName === webhooks.EVENT_FORM_START ? route.addForm(obj.ObjectID) : route.editForm(obj.ObjectID);
+                (obj.EventName === webhooks.EVENT_FORM_START ? route.addForm(obj.ObjectID) : route.editForm(obj.ObjectID)).then(
+                    function (result) {
+                        deferred.resolve(result);
+                    },
+                    function (error) {
+                        deferred.resolve(error instanceof Error ? error : new Error(error));
+                    }
+                    );
                 return deferred.promise;
             });
             steps.push(function (result) {
@@ -284,11 +294,11 @@ function startWebHooksServer() {
         }
 
         processing = false;
-        promised.seq(steps);
+        return promised.seq(steps);
 
     }
-    
-    
+
+
     return webhooks.start(config.webHooks.port, config.webHooks.path, function (obj) {
         console.log('Webhooks request: ', obj);
 
@@ -296,13 +306,13 @@ function startWebHooksServer() {
         if (obj.ObjectType !== rpm.OBJECT_TYPE.Form) {
             error = 'Unsupported ObjectType';
         } else if (obj.ParentType !== rpm.OBJECT_TYPE.PMTemplate) {
-            error = 'Unsupported ObjectType';
-        } else if (obj.EventName !== webhooks.EVENT_FORM_START && obj.EventName !== webhooks.EVENT_FORM_EDIT) {
             error = 'Unsupported ParentType';
+        } else if (obj.EventName !== webhooks.EVENT_FORM_START && obj.EventName !== webhooks.EVENT_FORM_EDIT) {
+            error = 'Unsupported EventName';
         }
 
         if (error) {
-            console.warn(error, obj);
+            console.error(error, obj);
             return;
         }
 

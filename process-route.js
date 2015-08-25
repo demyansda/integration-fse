@@ -20,8 +20,8 @@ Route.prototype.getPatch = function (srcForm, fieldMap) {
         function (fieldMap) {
             var result = {};
             var formValues = srcForm.getFieldsAsObject();
-            for (var srcField in fieldMap) {
-                result[fieldMap[srcField]] = formValues[srcField];
+            for (var dstField in fieldMap) {
+                result[dstField] = formValues[fieldMap[dstField]];
             }
             return result;
         }
@@ -42,7 +42,7 @@ Route.prototype.sync = function () {
         },
         function (data) {
             if (!data) {
-                console.log('No updatable fields for', route.src.Process, '->', route.dst.Process);
+                console.warn('No updatable fields for', route.src.Process, '->', route.dst.Process);
                 return;
             }
 
@@ -51,7 +51,7 @@ Route.prototype.sync = function () {
             var srcForms = data[0];
             var dstForms = data[1];
 
-            var linkedField = route.src._linkedFormIdField;
+            var linkedField = getLinkedFormIdField(route.src);
 
             var steps = [];
 
@@ -59,16 +59,16 @@ Route.prototype.sync = function () {
             var srcJustUpdated = route.src.getCache().justUpdatedForms;
 
             var fieldMap = data[2];
+
             function addSteps(srcId) {
                 if (srcJustUpdated && srcJustUpdated[srcId]) {
                     return;
                 }
                 var srcForm = srcForms[srcId];
                 var dstId = srcForm.getFieldValue(linkedField);
-                var dstForm = dstForms[dstId];
-                if (dstForm) {
+                if (dstForms[dstId]) {
                     steps.push(function () {
-                        return route.editForm(dstForm, fieldMap);
+                        return route.editForm(srcForm, fieldMap);
                     });
                     steps.push(function () {
                         stat.incUpdated();
@@ -98,56 +98,72 @@ Route.prototype.sync = function () {
     ]);
 }
 
-Route.prototype.getFieldMappings = function () {
-    var pair = this;
-    var dstProc = pair.dst;
-    var srcProc = pair.src;
+var ERROR_LINKED_FIELD_ABSENT = 'Linked form field "%s" not found in the process "%s"';
 
-    var linkedFormIdFieldName = srcProc._linkedFormIdField || LINKED_FORM_ID_FIELD;
+function getLinkedFormIdField(process) {
+    return process._linkedFormIdField || LINKED_FORM_ID_FIELD;
+}
+
+
+function getAndValidateFields(proc) {
+    return promised.seq([
+        function () {
+            return proc.getFields(true);
+        },
+        function (fields) {
+            fields = fields.Fields;
+            var linkedIdFieldName = getLinkedFormIdField(proc);
+            var srcLinkedIdFld = fields[linkedIdFieldName];
+            if (!srcLinkedIdFld) {
+                console.error(util.format(ERROR_LINKED_FIELD_ABSENT, linkedIdFieldName, proc.Process));
+                return;
+            }
+            delete fields[linkedIdFieldName];
+            return fields;
+        }
+    ]);
+}
+
+Route.prototype.getFieldMappings = function () {
+    var route = this;
+    var dstProc = route.dst;
+    var srcProc = route.src;
 
     return promised.seq([
         function () {
-            return promised.all(srcProc.getFields(true), dstProc.getFields(true));
+            return promised.all(getAndValidateFields(srcProc), getAndValidateFields(dstProc));
         },
         function (responses) {
-            var srcFields = responses[0].Fields;
-            var dstFields = responses[1].Fields;
-
-            var linkedFormIdField = srcFields[linkedFormIdFieldName];
-            if (!linkedFormIdField) {
-                console.error(util.format('Linked form field "%s" not found in the process "%s"', linkedFormIdFieldName, srcProc.Process));
-                return null;
-            }
 
             var fieldMappings = {};
+            var srcFields = responses[0];
+            var dstFields = responses[1];
 
-            function processFields(srcFieldName, dstFieldName) {
-                if (dstFieldName == linkedFormIdFieldName) {
-                    return;
+            if (srcFields && dstFields) {
+                var efm = route.extraFieldMappings || {};
+                for (var srcFieldName in srcFields) {
+                    var dstFieldName = efm[srcFieldName] || srcFieldName;
+                    var dst = dstFields[dstFieldName];
+                    if (!dst) {
+                        continue;
+                    }
+                    var src = srcFields[srcFieldName];
+                    if (!isFieldSupported(src)) {
+                        console.error(ERROR_FIELD_NOT_SUPPORTED, srcProc.Process, src);
+                        continue;
+                    }
+                    if (!isFieldSupported(dst)) {
+                        console.error(ERROR_FIELD_NOT_SUPPORTED, dstProc.Process, dst);
+                        continue;
+                    }
+                    if (dst.SubType !== src.SubType) {
+                        console.warn(util.format('Incompatible data types.\nSource: [%s][%s], Destination: [%s][%s]',
+                            srcProc.Process, srcFieldName, dstProc.Process, dstFieldName));
+                        continue;
+                    }
+                    fieldMappings[dstFieldName] = srcFieldName;
                 }
-                var dst = dstFields[dstFieldName];
-                var src = srcFields[srcFieldName];
-                if (!(dst && isFieldSupported(src) && isFieldSupported(dst))) {
-                    return;
-                }
-                if (dst.SubType !== src.SubType) {
-                    console.warn(util.format('Incompatible data types.\nSource: [%s][%s], Destination: [%s][%s]',
-                        srcProc.Process, srcFieldName, dstProc.Process, dstFieldName));
-                    return;
-                }
-                fieldMappings[dstFieldName] = srcFieldName;
             }
-
-            for (var fieldName in srcFields) {
-                processFields(fieldName, fieldName);
-            }
-            var efm = pair.extraFieldMappings;
-            if (efm) {
-                for (var dstFieldName in efm) {
-                    processFields(efm[dstFieldName], dstFieldName);
-                }
-            }
-
             return fieldMappings;
         }
     ]);
@@ -165,13 +181,16 @@ Route.prototype.addForm = function (srcId, fieldMap) {
         return route.getPatch(srcForm, fieldMap);
     });
     steps.push(function (patch) {
-        patch[route.dst._linkedFormIdField || LINKED_FORM_ID_FIELD] = srcId;
+        if (rpmUtil.isEmpty(patch)) {
+            return rpmUtil.getRejectedPromise(ERROR_NO_DATA);
+        }
+        patch[getLinkedFormIdField(route.dst)] = srcForm.FormID;
         return route.dst.addForm(patch);
     });
     steps.push(function (newForm) {
         var dstId = newForm.Form.FormID;
         var patch = {};
-        patch[route.src._linkedFormIdField || LINKED_FORM_ID_FIELD] = dstId;
+        patch[getLinkedFormIdField(route.src)] = dstId;
         return promised.all(
             route.src._api.editForm(srcForm.FormID, patch),
             srcForm.Archived && route.dst._api.setFormArchived(true, dstId)
@@ -180,7 +199,12 @@ Route.prototype.addForm = function (srcId, fieldMap) {
     return promised.seq(steps);
 };
 
+var ERROR_NO_DATA = 'No data to send'
+var ERROR_FIELD_NOT_FOUND = 'Field not found'
+var ERROR_FIELD_NOT_SUPPORTED = 'Field not supported'
+
 Route.prototype.editForm = function (srcId, fieldMap) {
+    
     var route = this;
     var steps = [];
     var srcForm;
@@ -192,7 +216,10 @@ Route.prototype.editForm = function (srcId, fieldMap) {
         return route.getPatch(srcForm, fieldMap);
     });
     steps.push(function (patch) {
-        var dstId = srcForm.getFieldValue(route.src._linkedFormIdField || LINKED_FORM_ID_FIELD);
+        if (rpmUtil.isEmpty(patch)) {
+            return rpmUtil.getRejectedPromise(ERROR_NO_DATA);
+        }
+        var dstId = srcForm.getFieldValue(getLinkedFormIdField(route.src));
         return route.dst._api.editForm(dstId, patch);
     });
     steps.push(function (dstForm) {
@@ -204,12 +231,12 @@ Route.prototype.editForm = function (srcId, fieldMap) {
     return promised.seq(steps);
 };
 
-var LINKED_FORM_ID_FIELD = exports.LINKED_FORM_ID_FIELD = 'linkedFormId';
+var LINKED_FORM_ID_FIELD = 'linkedFormId';
 
 var KNOWN_FIELD_TYPES = [rpm.OBJECT_TYPE.CustomField];
 
 function isFieldSupported(field) {
-    return field.UserCanEdit && !field.IsRepeating && KNOWN_FIELD_TYPES.indexOf(field.FieldType) >= 0;
+    return field && field.UserCanEdit && !field.IsRepeating && KNOWN_FIELD_TYPES.indexOf(field.FieldType) >= 0;
 }
 
 exports.Route = Route;
