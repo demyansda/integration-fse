@@ -4,6 +4,7 @@ var rpm = require('integration-common/api-wrappers');
 var rpmUtil = require('integration-common/util');
 var util = require('util');
 var promised = require('promised-io/promise');
+var fm = require('./field-match');
 
 function Route(srcProc, dstProc, extraFieldMappings) {
     this.src = srcProc;
@@ -147,31 +148,22 @@ Route.prototype.getFieldMappings = function () {
                     if (!dst) {
                         continue;
                     }
-                    var src = srcFields[srcFieldName];
-                    if (!isFieldSupported(src)) {
-                        console.error(ERROR_FIELD_NOT_SUPPORTED, srcProc.Process, src);
-                        continue;
-                    }
-                    if (!isFieldSupported(dst)) {
-                        console.error(ERROR_FIELD_NOT_SUPPORTED, dstProc.Process, dst);
-                        continue;
-                    }
-                    var subType = src.SubType;
-                    if (dst.SubType !== subType) {
-                        console.warn(util.format('Incompatible data types.\nSource: [%s][%s], Destination: [%s][%s]',
-                            srcProc.Process, srcFieldName, dstProc.Process, dstFieldName));
-                        continue;
-                    }
-                    if(subType===rpm.DATA_TYPE.FieldTableDefinedRow) {
-                        isTableDescriptionsMatch(src,dst);
-                    }
-                    fieldMappings[dstFieldName] = srcFieldName;
+                    try {
+                        fm.matchProcessFields(srcFields[srcFieldName], dst);
+                        fieldMappings[dstFieldName] = srcFieldName;
+                    } catch (error) {
+                        if(error instanceof Error) {
+                            throw error;
+                        }
+                        console.warn(error);
+                    } 
                 }
             }
             return fieldMappings;
         }
     ]);
 }
+
 
 Route.prototype.addForm = function (srcId, fieldMap) {
     var route = this;
@@ -205,7 +197,6 @@ Route.prototype.addForm = function (srcId, fieldMap) {
 
 var ERROR_NO_DATA = 'No data to send'
 var ERROR_FIELD_NOT_FOUND = 'Field not found'
-var ERROR_FIELD_NOT_SUPPORTED = 'Field not supported'
 
 Route.prototype.editForm = function (srcId, fieldMap) {
 
@@ -237,141 +228,6 @@ Route.prototype.editForm = function (srcId, fieldMap) {
 
 var LINKED_FORM_ID_FIELD = 'linkedFormId';
 
-var KNOWN_FIELD_TYPES = [rpm.OBJECT_TYPE.CustomField];
-
-function isFieldSupported(field) {
-    return field && field.UserCanEdit && !field.IsRepeating && KNOWN_FIELD_TYPES.indexOf(field.FieldType) >= 0;
-}
 
 exports.Route = Route;
 
-
-
-/*
-    FieldTableDefinedRow: 46,
-
-=== Field: Orders { Name: 'TABF1',
-  Uid: '500_26545',
-  Order: 4,
-  IsRepeating: false,
-  FieldType: 500,
-  SubType: 46,
-  FormatType: 18,
-  LayoutFormat: { Width: '1' },
-  InternalFormat: { TotalsRow: 0 },
-  UserCanEdit: true,
-  IsRequiredForUser: false,
-  Archived: false,
-  Rows: 
-   [ { ID: 9697,
-       Name: '',
-       Order: 0,
-       IsDefinition: true,
-       IsLabelRow: false,
-       IsShown: true,
-       Fields: [Object] },
-     { ID: 9698,
-       Name: 'Xxx',
-       Order: 1,
-       IsDefinition: false,
-       IsLabelRow: false,
-       IsShown: true,
-       Fields: [Object] } ] }
-*/
-
-
-function isTableDescriptionsMatch(rows1, rows2) {
-    console.log('isTableDescriptionsMatch');
-    rows1 = rows1.Rows || rows1;
-    rows2 = rows2.Rows || rows2;
-    if (rows1.length !== rows2.length) {
-        return false;
-    }
-    
-    function xxx(rows) {
-        var definitionRow;
-        var dataRows = {};
-        rows.forEach(function(row) {
-            if(row.IsLabelRow){
-                return;
-            }
-            
-            if(row.IsDefinition) {
-                definitionRow = definitionRow || row;
-            } else {
-                dataRows[row.Name] = row;
-            }
-        }
-            
-        console.log (row); 
-        });
-         
-    }
-       console.log ('tab1');
-    rows1.forEach(function(row) {
-       console.log (row); 
-    });
-       console.log ('tab2');
-    rows2.forEach(function(row) {
-       console.log (row); 
-    });
-    
-    return false;
-    
-}
-
-/*
-
-    FieldTable: 45,
-    
-Table with variable number of rows
-=== Field: Orders { Name: 'FFF2', 
-  Uid: '500_26552',
-  Order: 10,
-  IsRepeating: false,
-  FieldType: 500,
-  SubType: 45,
-  FormatType: 18,
-  LayoutFormat: { Width: '1' },
-  InternalFormat: { TotalsRow: 0 },
-  UserCanEdit: true,
-  IsRequiredForUser: false,
-  Archived: false,
-  Rows: 
-   [ { ID: 9703,
-       Name: '',
-       Order: 0,
-       IsDefinition: true,
-       IsLabelRow: false,
-       IsShown: true,
-       Fields: [Object] } ] }
-=== Row: { ID: 9703,
-  Name: '',
-  Order: 0,
-  IsDefinition: true,
-  IsLabelRow: false,
-  IsShown: true,
-  Fields: 
-   [ { Name: 'Q',
-       Uid: '500_26553',
-       Order: 1,
-       IsRepeating: false,
-       FieldType: 500,
-       SubType: 14,
-       FormatType: 20,
-       LayoutFormat: [Object],
-       UserCanEdit: true,
-       IsRequiredForUser: false,
-       Archived: false },
-     { Name: 'T',
-       Uid: '500_26554',
-       Order: 2,
-       IsRepeating: false,
-       FieldType: 500,
-       SubType: 1,
-       FormatType: 7,
-       LayoutFormat: [Object],
-       UserCanEdit: true,
-       IsRequiredForUser: false,
-       Archived: false } ] }
-       */
