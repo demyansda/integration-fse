@@ -1,4 +1,5 @@
 # ignore node installed files
 node_modules
 config.json
+probe.js
 *.log

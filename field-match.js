@@ -4,209 +4,367 @@ var rpmUtil = require('integration-common/util');
 var util = require('util');
 
 var KNOWN_FIELD_TYPES = [rpm.OBJECT_TYPE.CustomField];
-var ERROR_FIELD_NOT_SUPPORTED = 'Field not supported'
-var ERROR_INCOMPATIBLE_TYPES = 'Incompatible data types'
 
+var DATA_TYPES = exports.SUPPORTED_DATA_TYPES = (function () {
+    var typesWithRows = [
+        rpm.DATA_TYPE.FieldTable,
+        rpm.DATA_TYPE.FieldTableDefinedRow,
+    ];
+
+    var typesWithOptions = [
+        rpm.DATA_TYPE.DeprecatedTable,
+        rpm.DATA_TYPE.List,
+        rpm.DATA_TYPE.ListMultiSelect,
+        rpm.DATA_TYPE.YesNoList,
+        rpm.DATA_TYPE.LocationList,
+    ];
+
+    var supportedTypes = {};
+
+    [
+        rpm.DATA_TYPE.Text,
+        rpm.DATA_TYPE.Http,   // This is a fixed link
+        rpm.DATA_TYPE.Date,
+        rpm.DATA_TYPE.YesNo,
+        rpm.DATA_TYPE.List,
+        rpm.DATA_TYPE.Money,
+        rpm.DATA_TYPE.ListMultiSelect,
+        rpm.DATA_TYPE.TextArea,
+        rpm.DATA_TYPE.Link,
+        rpm.DATA_TYPE.Number,
+        rpm.DATA_TYPE.Money4,
+        rpm.DATA_TYPE.Percent,
+        rpm.DATA_TYPE.FixedNumber, // Fixed
+        rpm.DATA_TYPE.SpecialPhone, // WTF?
+        rpm.DATA_TYPE.LocationLatLong, // WTF?
+        rpm.DATA_TYPE.Decimal,
+        rpm.DATA_TYPE.LocationUTM,
+        rpm.DATA_TYPE.LocationDLS,
+        rpm.DATA_TYPE.LocationNTS,
+        rpm.DATA_TYPE.WellUWI,
+        rpm.DATA_TYPE.WellAPI,
+        rpm.DATA_TYPE.DateTime,
+        rpm.DATA_TYPE.MeasureLengthSmall,
+        rpm.DATA_TYPE.MeasureLengthMedium,
+        rpm.DATA_TYPE.MeasurePressure,
+        rpm.DATA_TYPE.MeasureArea,
+        rpm.DATA_TYPE.MeasureWeight,
+        rpm.DATA_TYPE.Force,
+        rpm.DATA_TYPE.MeasureDensity,
+        rpm.DATA_TYPE.MeasureFlow,
+        rpm.DATA_TYPE.MeasureTemperature,
+        rpm.DATA_TYPE.YesNoList,
+        rpm.DATA_TYPE.LocationList,
+        
+        
+        
+        // == TODO Enable when fixed in RPM ==        
+        // rpm.DATA_TYPE.FieldTable,
+        // rpm.DATA_TYPE.FieldTableDefinedRow,
+        // ===================================
+        
+                
+        
+    ].forEach(function (typ) {
+        var desc = supportedTypes[typ] = {};
+        if (typesWithOptions.indexOf(typ) >= 0) {
+            desc.hasOptions = true;
+        }
+        if (typesWithRows.indexOf(typ) >= 0) {
+            desc.hasRows = true;
+        }
+        Object.freeze(desc);
+    });
+    Object.freeze(supportedTypes);
+    return supportedTypes;
+})();
 
 function isFieldSupported(field) {
-    return field && field.UserCanEdit && !field.IsRepeating && KNOWN_FIELD_TYPES.indexOf(field.FieldType) >= 0;
+    return field.UserCanEdit && !field.IsRepeating && KNOWN_FIELD_TYPES.indexOf(field.FieldType) >= 0 && DATA_TYPES[field.SubType];
 }
 
+function FieldMappingInfo(srcFields, dstFields, efm) {
 
-function matchProcessFields(src, dst) {
-    [src, dst].forEach(function (field) {
-        if (!isFieldSupported(field)) {
-            throw util.format('Process field Uid=%s not supported', field.Uid);
+    efm = efm || {};
 
+    this.uidMap = {};
+    this.rowMap = {};
+    this.optionMap = {};
+    this.fieldMap = {};
+
+    for (var srcFieldName in srcFields) {
+        var dstFieldName = efm[srcFieldName] || srcFieldName;
+        var dst = dstFields[dstFieldName];
+        if (!dst) {
+            continue;
         }
-    });
-    var subType = src.SubType;
-    if (dst.SubType !== subType) {
-        throw (util.format('%s. Fields: [Uid=%s, Uid=%s]', ERROR_INCOMPATIBLE_TYPES, src.Uid, dst.Uid));
+        try {
+            this.merge(new FieldsMatcher(srcFields[srcFieldName], dst));
+            this.fieldMap[srcFieldName] = dstFieldName;
+        } catch (error) {
+            console.warn(error);
+        }
     }
-    if (subType === rpm.DATA_TYPE.FieldTableDefinedRow) {
-        matchFields(src, dst);
-    }
+    console.log('FieldMappingInfo', this);
 }
 
 
-/*
-    FieldTableDefinedRow: 46,
+FieldMappingInfo.prototype.processJsonValue = function (original) {
+    if (typeof original !== 'string') {
+        return original;
+    }
+    var value = tryJsonParse(original);
+    if (typeof value !== 'object') {
+        return original;
+    }
+    var changed;
+    if (Array.isArray(value.Values)) {
+        for (var key in value.Values) {
+            var element = value.Values[key];
+            var option = element.OptionID && this.optionMap[element.OptionID];
+            if (option) {
+                element.OptionID = option;
+                changed = true;
+            }
+        }
+    }
+    return changed ? JSON.stringify(value) : original;
+};
 
-=== Field: Orders { Name: 'TABF1',
-  Uid: '500_26545',
-  Order: 4,
-  IsRepeating: false,
-  FieldType: 500,
-  SubType: 46,
-  FormatType: 18,
-  LayoutFormat: { Width: '1' },
-  InternalFormat: { TotalsRow: 0 },
-  UserCanEdit: true,
-  IsRequiredForUser: false,
-  Archived: false,
-  Rows: 
-   [ { ID: 9697,
-       Name: '',
-       Order: 0,
-       IsDefinition: true,
-       IsLabelRow: false,
-       IsShown: true,
-       Fields: [Object] },
-     { ID: 9698,
-       Name: 'Xxx',
-       Order: 1,
-       IsDefinition: false,
-       IsLabelRow: false,
-       IsShown: true,
-       Fields: [Object] } ] }
-*/
 
-function getTableRows(processField) {
-    var rows = processField;
-    var result = { dataRows: {} };
-    rows.forEach(function (row) {
-        if (row.IsLabelRow) {
+FieldMappingInfo.prototype.getDestinationFields = function (srcFields, currentDstFields) {
+    var self = this;
+    var result = [];
+
+
+    var curDstFieldsByName = {};
+    var curDstFieldsByUid = {};
+    currentDstFields && currentDstFields.forEach(function (field) {
+        curDstFieldsByName[field.Field] = field;
+        curDstFieldsByUid[field.Uid] = field;
+    });
+
+    function getDestinationRow(field) {
+        if (!field.Rows) {
             return;
         }
-        var fields = {};
-        row.Fields.forEach(function (tableField) {
-            if (!isFieldSupported(tableField)) {
-                throw util.format('%s. Process field: "%s", Row: %d, Table field: "%s"', ERROR_FIELD_NOT_SUPPORTED, processField.Uid, row.ID, tableField.Name);
-            }
-            fields[tableField.Name] = tableField;
-        });
-        if (row.IsDefinition) {
-            result.definitionRow = result.definitionRow || fields;
-        } else {
-            result.dataRows[row.Name] = fields;
+        var currentField = curDstFieldsByName[field.Field] || curDstFieldsByUid[field.Uid];
+        var currentDefRow;
+        var currentRows = {};
+
+        if (currentField) {
+            currentField.Rows.forEach(function (row) {
+                if (row.IsLabelRow) {
+                    return;
+                }
+                if (row.IsDefinition) {
+                    currentDefRow = row;
+                } else if (row.TemplateDefinedRowID) {
+                    currentRows[row.TemplateDefinedRowID] = row;
+                }
+            });
         }
+
+        var result = [];
+        // var order = 0;
+        field.Rows.forEach(function (row) {
+            if (row.IsLabelRow) {
+                return;
+            }
+            var v;
+            if (row.IsDefinition) {
+                if (currentDefRow) {
+                    v = currentDefRow;
+                } else {
+                    v = {
+                        RowID: 0,
+                        TemplateDefinedRowID: 0,
+                        IsDefinition: true,
+                        // Order: 0,
+                        Fields: []
+                    };
+                    row.Fields.forEach(function (field) {
+                        v.Fields.push({
+                            Values: [],
+                            Uid: self.uidMap[field.Uid]
+                        });
+                    });
+                }
+                result.unshift(v);
+                return;
+            }
+            var templateId = self.rowMap[row.TemplateDefinedRowID];
+            var existingRow = currentRows[templateId];
+
+            result.push({
+                RowID: existingRow && existingRow.RowID || 0,
+                TemplateDefinedRowID: templateId || 0,
+                Order: existingRow && existingRow.Order || 0,
+                Fields: row.Fields.map(self.getDestinationField.bind(self))
+            });
+
+        });
+        return result;
+    }
+
+
+    srcFields.forEach(function (field) {
+        var dst = {
+            Field: self.fieldMap[field.Field],
+            Uid: self.uidMap[field.Uid],
+        };
+        if (!dst.Uid && !dst.Field) {
+            return;
+        }
+        if (field.Value !== 'undefined') {
+            dst.Value = self.processJsonValue(field.Value);
+        }
+        if (field.Rows) {
+            dst.Rows = getDestinationRow(field);
+        }
+        result.push(dst);
     });
+    console.log('ssssssssssss',result);
     return result;
 };
 
-function dummy () {}
-
-function matchObjects(obj1, obj2, matcher) {
-    var names = {};
-
-    matcher = matcher || dummy;
-
-    for (var key in obj1) {
-        matcher(rpmUtil.getEager(obj2, key), obj1.dataRows[key]);
-        names[key] = true;
+function tryJsonParse(value) {
+    if (typeof value !== 'string') {
+        return value;
     }
-
-    for (var key in obj2) {
-        if (!names[key]) {
-            matcher(rpmUtil.getEager(obj1, key), obj2.dataRows[key]);
-        }
+    try {
+        value = JSON.parse(value);
+    } catch (err) {
     }
+    return value;
 }
 
-function matchFields(field1, field2) {
-    console.log('isTableDescriptionsMatch');
+FieldMappingInfo.prototype.getDestinationValue = function (value) {
+    var self = this;
+    var id = self.optionMap[value.ID];
+    return {
+        ID: id ? '' + id : 0,
+        Value: value.Value
+    };
+};
+
+FieldMappingInfo.prototype.getDestinationField = function (field) {
+    var self = this;
+    return {
+        Uid: self.uidMap[field.Uid],
+        Values: field.Values.map(self.getDestinationValue.bind(self))
+    };
+};
+
+FieldMappingInfo.prototype.merge = function (fm) {
+    var self = this;
+    ['uidMap', 'rowMap', 'optionMap'].forEach(function (property) {
+        var reciever = self[property];
+        var source = fm[property];
+        for (var key in source) {
+            reciever[key] = source[key];
+        }
+    });
+};
+
+FieldsMatcher.prototype.matchProcessFields = function (src, dst) {
+    [src, dst].forEach(function (field) {
+        if (!isFieldSupported(field)) {
+            throwFieldNotSupportedError(field);
+        }
+    });
+    var typ = src.SubType;
+    if (dst.SubType != typ) {
+        throwIncompatibleTypesError(src, dst);
+    }
+    typ = DATA_TYPES[typ];
+    if (typ.hasRows) {
+        this.matchRows(src, dst);
+    }
+    if (typ.hasOptions) {
+        this.matchOptions(src, dst);
+    }
+    this.uidMap[src.Uid] = dst.Uid;
+};
+
+function FieldsMatcher(src, dst) {
+    this.uidMap = {};
+    this.rowMap = {};
+    this.optionMap = {};
+    this.matchProcessFields(src, dst);
+}
+
+function getTableRows(processField) {
+    var result = { rowIds: {} };
+    processField.Rows && processField.Rows.forEach(function (row) {
+        if (row.IsLabelRow) {
+            return;
+        }
+        if (!row.IsDefinition) {
+            result.rowIds[row.Name] = row.ID;
+        } else if (!result.definitionRow) {
+            var fields = {};
+            row.Fields.forEach(function (tableField) {
+                if (!isFieldSupported(tableField)) {
+                    throwFieldNotSupportedError(tableField);
+                }
+                fields[tableField.Name] = tableField;
+            });
+            result.fields = fields;
+        }
+    });
+    if (!result.fields) {
+        rpmUtil.throwError('Definition row is absent for field: ' + processField.Name, 'NoTableDefinitionRowError', { field: processField });
+    }
+    return result;
+};
+
+
+FieldsMatcher.prototype.matchRows = function (field1, field2) {
 
     var rows1 = getTableRows(field1);
     var rows2 = getTableRows(field2);
+    var self = this;
+    rpmUtil.matchObjects(rows1.fields, rows2.fields, self.matchProcessFields.bind(self));
 
-    function matchTableFields(tableField1, tablefield2) {
-        if (tableField1.SubType !== tablefield2.SubType) {
-            throw util.format('%s. Table Fields: [%s, %s]', ERROR_INCOMPATIBLE_TYPES, tableField1, tablefield2);
-        }
-    }
+    rpmUtil.matchObjects(rows1.rowIds, rows2.rowIds, function (id1, id2) {
+        self.rowMap[id1] = id2;
+    });
 
-    function matchRows(row1, row2) {
-        matchObjects(row1, row2, matchTableFields);
-    }
+};
 
-    matchRows(rows1.definitionRow, rows2.definitionRow);
-    matchObjects(rows1.dataRows, rows2.dataRows, matchRows);
-    matchObjects(rows2.dataRows, rows1.dataRows, matchRows);
-
-}
-
-function getOptions(field) {
+function getOptions(processField) {
     var options = {};
-    field.Options.forEach(function (option) {
+    processField.Options && processField.Options.forEach(function (option) {
         if (!option.IsLabel) {
-            options[option.Text] = true;
+            options[option.Text] = option.ID;
         }
     });
-    return options;
+    for (var key in options) {
+        return options;
+    }
+    rpmUtil.throwError('Options are not defined for field ' + processField.Name, 'NoOptionsError', { field: processField });
 }
 
-function matchOptions(field1, field2) {
-    console.log('isTableDescriptionsMatch');
-
+FieldsMatcher.prototype.matchOptions = function (field1, field2) {
     var opts1 = getOptions(field1);
     var opts2 = getOptions(field2);
+    var self = this;
+    rpmUtil.matchObjects(opts1, opts2, function (id1, id2) {
+        self.optionMap[id1] = id2;
+    });
+};
 
-    matchObjects(opts1.dataRows, opts2.dataRows);
+function throwFieldNotSupportedError(field) {
+    rpmUtil.throwError('Field not supported: ' + field.Name, 'FieldNotSupportedError', { field: field });
+}
 
+function throwIncompatibleTypesError(field1, field2) {
+    rpmUtil.throwError(util.format('Incompatible field types: ["%s.%d", "%s.%d"]', field1.Name, field1.SubType, field2.Name, field1.SubType),
+        'IncompatibleTypesError', { field1: field1, field2: field2 });
 }
 
 
-/*
 
-  Options: 
-   [ { Text: '1', ID: 31708, IsHidden: false, IsLabel: false },
-     { Text: '2', ID: 31709, IsHidden: false, IsLabel: false },
-     { Text: '3', ID: 31710, IsHidden: false, IsLabel: false } ],
+exports.FieldMappingInfo = FieldMappingInfo;
 
-
-    FieldTable: 45,
-    
-Table with variable number of rows
-=== Field: Orders { Name: 'FFF2', 
-  Uid: '500_26552',
-  Order: 10,
-  IsRepeating: false,
-  FieldType: 500,
-  SubType: 45,
-  FormatType: 18,
-  LayoutFormat: { Width: '1' },
-  InternalFormat: { TotalsRow: 0 },
-  UserCanEdit: true,
-  IsRequiredForUser: false,
-  Archived: false,
-  Rows: 
-   [ { ID: 9703,
-       Name: '',
-       Order: 0,
-       IsDefinition: true,
-       IsLabelRow: false,
-       IsShown: true,
-       Fields: [Object] } ] }
-=== Row: { ID: 9703,
-  Name: '',
-  Order: 0,
-  IsDefinition: true,
-  IsLabelRow: false,
-  IsShown: true,
-  Fields: 
-   [ { Name: 'Q',
-       Uid: '500_26553',
-       Order: 1,
-       IsRepeating: false,
-       FieldType: 500,
-       SubType: 14,
-       FormatType: 20,
-       LayoutFormat: [Object],
-       UserCanEdit: true,
-       IsRequiredForUser: false,
-       Archived: false },
-     { Name: 'T',
-       Uid: '500_26554',
-       Order: 2,
-       IsRepeating: false,
-       FieldType: 500,
-       SubType: 1,
-       FormatType: 7,
-       LayoutFormat: [Object],
-       UserCanEdit: true,
-       IsRequiredForUser: false,
-       Archived: false } ] }
-       */
-
-exports.matchProcessFields = matchProcessFields;       
