@@ -17,8 +17,9 @@ function updateSubscriptionInfo() {
             return api.getInfo();
         },
         function (info) {
+            console.log('info', info);
             api.instance = info.RPM;
-            api.subscriber = info.Subscriber;
+            api.subscriber = info.SubscriberID;
         }
     ]);
 }
@@ -67,8 +68,8 @@ function initRoutes() {
             function getProcess(procDef) {
                 var api = rpmUtil.getEager(config.subscriptions, procDef.subscription, 'Unknown subscription: ');
                 var result = rpmUtil.getEager(api.procCache, procDef.process, 'Unknown Process: ');
-                if (!rpmUtil.pushIfNotIn(allProcesses, result)) {
-                    throw new Error('Duplicate process:', result);
+                if (!allProcesses.pushUnique(result)) {
+                    throw new Error('Duplicate process: ' + result);
                 }
                 result._linkedFormIdField = procDef.linkedFormIdField;
                 return result;
@@ -79,12 +80,11 @@ function initRoutes() {
                 for (var key in object) {
                     var value = object[key];
                     if (typeof value !== 'string') {
-                        throw new Error('Bad field name:', value);
+                        throw new Error('Bad field name: ' + value);
                     }
-                    if (values.indexOf(value) >= 0) {
-                        throw new Error('Duplicate destination fields:', object);
+                    if (!values.pushUnique(value)) {
+                        throw new Error('Duplicate destination fields: ' + object);
                     }
-                    values.push(value);
                 }
                 return true;
             }
@@ -101,14 +101,10 @@ function initRoutes() {
                     routes.push(new prt.Route(srcProc, dstProc, extraFieldMappings));
 
                     if (procPair.twoWay) {
-                        var reverseFieldMappings = {};
-                        for (var key in extraFieldMappings) {
-                            reverseFieldMappings[extraFieldMappings[key]] = key;
-                        }
-                        routes.push(new prt.Route(dstProc, srcProc, reverseFieldMappings));
+                        routes.push(new prt.Route(dstProc, srcProc, reverseObject(extraFieldMappings)));
                     }
                 } catch (error) {
-                    console.error(error);
+                    console.error(JSON.stringify(error));
                     return;
                 }
             });
@@ -125,12 +121,20 @@ function initRoutes() {
     ]);
 }
 
+function reverseObject(object) {
+    var reversed = {};
+    for (var key in object) {
+        reversed[object[key]] = key;
+    }
+    return reversed;
+}
+
 function getApis() {
     var routes = this;
     var apis = [];
     routes.forEach(function (pair) {
-        rpmUtil.pushIfNotIn(apis, pair.src._api);
-        rpmUtil.pushIfNotIn(apis, pair.dst._api);
+        apis.pushUnique(pair.src._api);
+        apis.pushUnique(pair.dst._api);
     });
     return apis;
 }
@@ -184,9 +188,6 @@ function getFormsData() {
     ]);
 }
 
-
-
-
 var routes;
 var tree;
 
@@ -218,7 +219,7 @@ promised.seq([
     function (results) {
         tree = results[1];
         console.log(tree);
-        // startWebHooksServer();
+        startWebHooksServer();
     }
 ]).then(
     function () {
@@ -284,7 +285,7 @@ function startWebHooksServer() {
             });
             steps.push(function (result) {
                 if (result instanceof Error) {
-                    console.error(result);
+                    console.error(JSON.stringify(result));
                 }
             });
         }
@@ -312,7 +313,7 @@ function startWebHooksServer() {
         }
 
         if (error) {
-            console.error(error, obj);
+            console.error(error);
             return;
         }
 

@@ -59,8 +59,8 @@ var DATA_TYPES = exports.SUPPORTED_DATA_TYPES = (function () {
         
         
         // == TODO Enable when fixed in RPM ==        
-        // rpm.DATA_TYPE.FieldTable,
-        // rpm.DATA_TYPE.FieldTableDefinedRow,
+        rpm.DATA_TYPE.FieldTable,
+        rpm.DATA_TYPE.FieldTableDefinedRow,
         // ===================================
         
                 
@@ -105,7 +105,6 @@ function FieldMappingInfo(srcFields, dstFields, efm) {
             console.warn(error);
         }
     }
-    console.log('FieldMappingInfo', this);
 }
 
 
@@ -113,93 +112,83 @@ FieldMappingInfo.prototype.processJsonValue = function (original) {
     if (typeof original !== 'string') {
         return original;
     }
-    var value = tryJsonParse(original);
+    var value = rpmUtil.tryJsonParse(original);
     if (typeof value !== 'object') {
         return original;
     }
     var changed;
-    if (Array.isArray(value.Values)) {
-        for (var key in value.Values) {
-            var element = value.Values[key];
-            var option = element.OptionID && this.optionMap[element.OptionID];
-            if (option) {
-                element.OptionID = option;
-                changed = true;
-            }
+    var self = this;
+    Array.isArray(value.Values) && value.Values.forEach(function (element) {
+        var option = element.OptionID && self.optionMap[element.OptionID];
+        if (option) {
+            element.OptionID = option;
+            changed = true;
         }
-    }
+    });
     return changed ? JSON.stringify(value) : original;
 };
 
 
-FieldMappingInfo.prototype.getDestinationFields = function (srcFields, currentDstFields) {
+FieldMappingInfo.prototype.getDestinationFields = function (srcFields, existingFields) {
     var self = this;
     var result = [];
 
 
-    var curDstFieldsByName = {};
-    var curDstFieldsByUid = {};
-    currentDstFields && currentDstFields.forEach(function (field) {
-        curDstFieldsByName[field.Field] = field;
-        curDstFieldsByUid[field.Uid] = field;
+    var existingFieldsByName = {};
+    var existingFieldsByUid = {};
+    existingFields && existingFields.forEach(function (field) {
+        existingFieldsByName[field.Field] = field;
+        existingFieldsByUid[field.Uid] = field;
     });
 
-    function getDestinationRow(field) {
-        if (!field.Rows) {
+    function getDestinationRows(srcTableField) {
+        if (!srcTableField.Rows) {
             return;
         }
-        var currentField = curDstFieldsByName[field.Field] || curDstFieldsByUid[field.Uid];
+        var currentField = existingFieldsByName[srcTableField.Field] || existingFieldsByUid[srcTableField.Uid];
         var currentDefRow;
         var currentRows = {};
+        var templatelessRows = [];
 
-        if (currentField) {
-            currentField.Rows.forEach(function (row) {
-                if (row.IsLabelRow) {
-                    return;
-                }
-                if (row.IsDefinition) {
-                    currentDefRow = row;
-                } else if (row.TemplateDefinedRowID) {
-                    currentRows[row.TemplateDefinedRowID] = row;
-                }
-            });
-        }
-
-        var result = [];
-        // var order = 0;
-        field.Rows.forEach(function (row) {
+        currentField && currentField.Rows.forEach(function (row) {
             if (row.IsLabelRow) {
                 return;
             }
-            var v;
             if (row.IsDefinition) {
-                if (currentDefRow) {
-                    v = currentDefRow;
-                } else {
-                    v = {
-                        RowID: 0,
-                        TemplateDefinedRowID: 0,
-                        IsDefinition: true,
-                        // Order: 0,
-                        Fields: []
-                    };
-                    row.Fields.forEach(function (field) {
-                        v.Fields.push({
+                currentDefRow = row;
+            } else if (row.TemplateDefinedRowID) {
+                currentRows[row.TemplateDefinedRowID] = row;
+            } else {
+                templatelessRows.push(row);
+            }
+        });
+
+
+        var result = [];
+        srcTableField.Rows.forEach(function (row) {
+            if (row.IsLabelRow) {
+                return;
+            }
+            if (row.IsDefinition) {
+                result.unshift(currentDefRow || {
+                    RowID: self.rowMap[row.RowID],
+                    IsDefinition: true,
+                    Fields: row.Fields.map(function (field) {
+                        return {
                             Values: [],
                             Uid: self.uidMap[field.Uid]
-                        });
-                    });
-                }
-                result.unshift(v);
+                        };
+                    })
+                });
                 return;
             }
             var templateId = self.rowMap[row.TemplateDefinedRowID];
-            var existingRow = currentRows[templateId];
+            var existingRow = currentRows[templateId] || templatelessRows.shift();
+
 
             result.push({
                 RowID: existingRow && existingRow.RowID || 0,
                 TemplateDefinedRowID: templateId || 0,
-                Order: existingRow && existingRow.Order || 0,
                 Fields: row.Fields.map(self.getDestinationField.bind(self))
             });
 
@@ -216,51 +205,36 @@ FieldMappingInfo.prototype.getDestinationFields = function (srcFields, currentDs
         if (!dst.Uid && !dst.Field) {
             return;
         }
-        if (field.Value !== 'undefined') {
-            dst.Value = self.processJsonValue(field.Value);
-        }
         if (field.Rows) {
-            dst.Rows = getDestinationRow(field);
+            dst.Rows = getDestinationRows(field);
+        } else {
+            dst.Value = self.processJsonValue(field.Value);
         }
         result.push(dst);
     });
-    console.log('ssssssssssss',result);
     return result;
 };
 
-function tryJsonParse(value) {
-    if (typeof value !== 'string') {
-        return value;
-    }
-    try {
-        value = JSON.parse(value);
-    } catch (err) {
-    }
-    return value;
-}
 
-FieldMappingInfo.prototype.getDestinationValue = function (value) {
-    var self = this;
-    var id = self.optionMap[value.ID];
-    return {
-        ID: id ? '' + id : 0,
-        Value: value.Value
-    };
-};
 
 FieldMappingInfo.prototype.getDestinationField = function (field) {
     var self = this;
     return {
         Uid: self.uidMap[field.Uid],
-        Values: field.Values.map(self.getDestinationValue.bind(self))
+        Values: field.Values.map(function (value) {
+            return {
+                ID: self.optionMap[value.ID] || 0,
+                Value: value.Value
+            };
+        })
     };
 };
 
-FieldMappingInfo.prototype.merge = function (fm) {
+FieldMappingInfo.prototype.merge = function (fieldsMatcher) {
     var self = this;
     ['uidMap', 'rowMap', 'optionMap'].forEach(function (property) {
         var reciever = self[property];
-        var source = fm[property];
+        var source = fieldsMatcher[property];
         for (var key in source) {
             reciever[key] = source[key];
         }
@@ -269,21 +243,13 @@ FieldMappingInfo.prototype.merge = function (fm) {
 
 FieldsMatcher.prototype.matchProcessFields = function (src, dst) {
     [src, dst].forEach(function (field) {
-        if (!isFieldSupported(field)) {
-            throwFieldNotSupportedError(field);
-        }
+        isFieldSupported(field) || throwFieldNotSupportedError(field);
     });
     var typ = src.SubType;
-    if (dst.SubType != typ) {
-        throwIncompatibleTypesError(src, dst);
-    }
+    dst.SubType == typ || throwIncompatibleTypesError(src, dst);
     typ = DATA_TYPES[typ];
-    if (typ.hasRows) {
-        this.matchRows(src, dst);
-    }
-    if (typ.hasOptions) {
-        this.matchOptions(src, dst);
-    }
+    typ.hasRows && this.matchRows(src, dst);
+    typ.hasOptions && this.matchOptions(src, dst);
     this.uidMap[src.Uid] = dst.Uid;
 };
 
@@ -291,6 +257,7 @@ function FieldsMatcher(src, dst) {
     this.uidMap = {};
     this.rowMap = {};
     this.optionMap = {};
+    this.dstDefinitionRows = {};
     this.matchProcessFields(src, dst);
 }
 
@@ -300,22 +267,17 @@ function getTableRows(processField) {
         if (row.IsLabelRow) {
             return;
         }
-        if (!row.IsDefinition) {
-            result.rowIds[row.Name] = row.ID;
-        } else if (!result.definitionRow) {
+        if (row.IsDefinition && !result.fields) {
             var fields = {};
             row.Fields.forEach(function (tableField) {
-                if (!isFieldSupported(tableField)) {
-                    throwFieldNotSupportedError(tableField);
-                }
+                isFieldSupported(tableField) || throwFieldNotSupportedError(tableField);
                 fields[tableField.Name] = tableField;
             });
             result.fields = fields;
         }
+        result.rowIds[row.Name || ''] = row.ID;
     });
-    if (!result.fields) {
-        rpmUtil.throwError('Definition row is absent for field: ' + processField.Name, 'NoTableDefinitionRowError', { field: processField });
-    }
+    result.fields || rpmUtil.throwError('Definition row is absent for field: ' + processField.Name, 'NoTableDefinitionRowError', { field: processField });
     return result;
 };
 
@@ -326,7 +288,6 @@ FieldsMatcher.prototype.matchRows = function (field1, field2) {
     var rows2 = getTableRows(field2);
     var self = this;
     rpmUtil.matchObjects(rows1.fields, rows2.fields, self.matchProcessFields.bind(self));
-
     rpmUtil.matchObjects(rows1.rowIds, rows2.rowIds, function (id1, id2) {
         self.rowMap[id1] = id2;
     });

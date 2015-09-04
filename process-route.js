@@ -47,7 +47,7 @@ Route.prototype.sync = function () {
 
             var srcForms = data[0];
             var dstForms = data[1];
-
+            
             var linkedField = getLinkedFormIdField(route.src);
 
             var steps = [];
@@ -63,9 +63,10 @@ Route.prototype.sync = function () {
                 }
                 var srcForm = srcForms[srcId];
                 var dstId = srcForm.getFieldValue(linkedField);
-                if (dstForms[dstId]) {
+                var dstForm = dstForms[dstId];
+                if (dstForm) {
                     steps.push(function () {
-                        return route.editForm(srcForm, fieldMap);
+                        return route.editForm(srcForm, fieldMap, dstForm);
                     });
                     steps.push(function () {
                         stat.incUpdated();
@@ -132,11 +133,8 @@ Route.prototype.getFieldMappings = function () {
             return promised.all(getAndValidateFields(srcProc), getAndValidateFields(dstProc));
         },
         function (responses) {
-
             var srcFields = responses[0];
             var dstFields = responses[1];
-            console.log('srcFields',srcFields);
-            console.log('dstFields',dstFields);
             return (srcFields && dstFields) ? new FieldMappingInfo(srcFields, dstFields, route.extraFieldMappings) : {};
         }
     ]);
@@ -174,9 +172,8 @@ Route.prototype.addForm = function (srcId, fieldMap) {
 };
 
 var ERROR_NO_DATA = 'No data to send';
-var ERROR_FIELD_NOT_FOUND = 'Field not found';
 
-Route.prototype.editForm = function (srcId, dstForm, fieldMap) {
+Route.prototype.editForm = function (srcId, fieldMap, dstForm) {
 
     var route = this;
     var steps = [];
