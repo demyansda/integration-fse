@@ -69,7 +69,7 @@ function initRoutes() {
                 var api = rpmUtil.getEager(config.subscriptions, procDef.subscription, 'Unknown subscription: ');
                 var result = rpmUtil.getEager(api.procCache, procDef.process, 'Unknown Process: ');
                 if (!allProcesses.pushUnique(result)) {
-                    throw new Error('Duplicate process: ' + result);
+                    throw new Error('Duplicate process: ' + result.Process);
                 }
                 result._linkedFormIdField = procDef.linkedFormIdField;
                 return result;
@@ -83,7 +83,7 @@ function initRoutes() {
                         throw new Error('Bad field name: ' + value);
                     }
                     if (!values.pushUnique(value)) {
-                        throw new Error('Duplicate destination fields: ' + object);
+                        throw new Error('Duplicate destination fields: ' + JSON.stringify(object));
                     }
                 }
                 return true;
@@ -262,43 +262,42 @@ function startWebHooksServer() {
                 ]));
         }
 
-        var steps = [];
 
-        function addStep(obj) {
-            steps.push(function () {
-                return getRoute(obj);
-            });
-            steps.push(function (route) {
-                if (!route) {
-                    return new Error('Route cannot be found for ' + JSON.stringify(obj));
-                }
-                var deferred = new Deferred();
-                (obj.EventName === webhooks.EVENT_FORM_START ? route.addForm(obj.ObjectID) : route.editForm(obj.ObjectID)).then(
-                    function (result) {
-                        deferred.resolve(result);
-                    },
-                    function (error) {
-                        deferred.resolve(error instanceof Error ? error : new Error(error));
+        function processOneRequest(obj) {
+            promised.seq([
+                function () {
+                    return getRoute(obj);
+                },
+                function (route) {
+                    if (!route) {
+                        return new Error('Route cannot be found for ' + JSON.stringify(obj));
                     }
-                    );
-                return deferred.promise;
-            });
-            steps.push(function (result) {
-                if (result instanceof Error) {
-                    console.error(JSON.stringify(result));
+                    var deferred = new Deferred();
+                    (obj.EventName === webhooks.EVENT_FORM_START ? route.addForm(obj.ObjectID) : route.editForm(obj.ObjectID)).then(
+                        function (result) {
+                            deferred.resolve(result);
+                        },
+                        function (error) {
+                            deferred.resolve(error instanceof Error ? error : new Error(error));
+                        }
+                        );
+                    return deferred.promise;
+                },
+                function (result) {
+                    if (result instanceof Error) {
+                        console.error(result);
+                    }
                 }
-            });
+            ]);
         }
 
         while (queue.length) {
-            addStep(queue.shift());
+            processOneRequest(queue.shift());
         }
 
         processing = false;
-        return promised.seq(steps);
 
     }
-
 
     return webhooks.start(config.webHooks.port, config.webHooks.path, config.webHooks, function (obj) {
         console.log('Webhooks request: ', obj);
