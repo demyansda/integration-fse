@@ -5,16 +5,16 @@
     "dependencies": {
         "promised-io": "^0.3.5",
         "node-rest-client": "^1.4.4",
-        "integration-common": "https://github.com/rpmsoftware/integration-common.git#0.0.9",
-        "integration-web": "https://github.com/rpmsoftware/integration-web.git#0.0.2"
+        "integration-common": "https://github.com/rpmsoftware/integration-common.git",
+        "integration-web": "https://github.com/rpmsoftware/integration-web.git"
     },
     "description": "Syncronizes changes between RPM processes",
     "author": "Dmitriy Serdyukov",
     "files": [
-        "fse.js",
         "config.json.sample",
-        "process-route.js",
-        "field-match.js"
+        "field-match.js",
+        "fse.js",
+        "process-route.js"
     ],
     "license": "ISC",
     "engines": {

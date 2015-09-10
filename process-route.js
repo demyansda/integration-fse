@@ -20,7 +20,9 @@ Route.prototype.getPatch = function (srcForm, fieldMap, dstForm) {
             return fieldMap || route.getFieldMappings();
         },
         function (fieldMap) {
-            return fieldMap.getDestinationFields(srcForm.Fields, dstForm && dstForm.Fields);
+            var patch = fieldMap.getDestinationFields(srcForm.Fields, dstForm && dstForm.Fields);
+            patch.push({ Field: getLinkedFormIdField(route.dst), Value: srcForm.FormID });
+            return patch;
         }
     ]);
 };
@@ -47,7 +49,7 @@ Route.prototype.sync = function () {
 
             var srcForms = data[0];
             var dstForms = data[1];
-            
+
             var linkedField = getLinkedFormIdField(route.src);
 
             var steps = [];
@@ -146,17 +148,18 @@ Route.prototype.addForm = function (srcId, fieldMap) {
     var steps = [];
     var srcForm;
     steps.push(function () {
-        return typeof srcId === 'object' ? srcId : route.src._api.getForm(srcId);
+        if (srcId) {
+            return typeof srcId === 'object' ? srcId : route.src._api.getForm(srcId);
+        }
     });
     steps.push(function (result) {
-        srcForm = result.Form || result;
+        srcForm = result && result.Form || result;
         return route.getPatch(srcForm, fieldMap);
     });
     steps.push(function (patch) {
         if (rpmUtil.isEmpty(patch)) {
             return rpmUtil.getRejectedPromise(ERROR_NO_DATA);
         }
-        patch[getLinkedFormIdField(route.dst)] = srcForm.FormID;
         return route.dst.addForm(patch);
     });
     steps.push(function (newForm) {

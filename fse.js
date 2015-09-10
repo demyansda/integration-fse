@@ -104,7 +104,7 @@ function initRoutes() {
                         routes.push(new prt.Route(dstProc, srcProc, reverseObject(extraFieldMappings)));
                     }
                 } catch (error) {
-                    console.error(JSON.stringify(error));
+                    console.error(error);
                     return;
                 }
             });
@@ -182,7 +182,7 @@ function getFormsData() {
             steps.push(function () {
                 cache.formsData = result;
                 return result;
-            })
+            });
             return promised.seq(steps);
         }
     ]);
@@ -248,7 +248,7 @@ function startWebHooksServer() {
 
 
         function getRoute(obj) {
-            var keys = [obj.Instance, obj.Subscriber, obj.ParentID]
+            var keys = [obj.Instance, obj.Subscriber, obj.ParentID];
             return rpmUtil.getDeepValue(tree, keys) ||
                 (treeUpdated ? undefined : promised.seq([
                     function () {
@@ -257,7 +257,7 @@ function startWebHooksServer() {
                     function (newTree) {
                         tree = newTree;
                         treeUpdated = true;
-                        return rpmUtil.getDeepValue(tree, keys)
+                        return rpmUtil.getDeepValue(tree, keys);
                     }
                 ]));
         }
@@ -300,7 +300,7 @@ function startWebHooksServer() {
     }
 
 
-    return webhooks.start(config.webHooks.port, config.webHooks.path, function (obj) {
+    return webhooks.start(config.webHooks.port, config.webHooks.path, config.webHooks, function (obj) {
         console.log('Webhooks request: ', obj);
 
         var error;

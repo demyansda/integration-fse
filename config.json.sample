@@ -1,7 +1,10 @@
 {
     "webHooks": {
         "port": 30000,
-        "path": "wh"
+        "path": "wh",
+        "passphrase": "wh4000",
+        "key": "-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----\n",
+        "cert": "-----BEGIN CERTIFICATE-----\r\n...\r\n-----END CERTIFICATE-----\r\n"
     },
     "subscriptions": {
         "s1": {
