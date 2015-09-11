@@ -299,7 +299,7 @@ function startWebHooksServer() {
 
     }
 
-    return webhooks.start(config.webHooks.port, config.webHooks.path, config.webHooks, function (obj) {
+    return webhooks.start(config.webHooks, function (obj) {
         console.log('Webhooks request: ', obj);
 
         var error;

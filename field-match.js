@@ -58,10 +58,8 @@ var DATA_TYPES = exports.SUPPORTED_DATA_TYPES = (function () {
         
         
         
-        // == TODO Enable when fixed in RPM ==        
         rpm.DATA_TYPE.FieldTable,
         rpm.DATA_TYPE.FieldTableDefinedRow,
-        // ===================================
         
                 
         
