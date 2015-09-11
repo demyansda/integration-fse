@@ -106,11 +106,20 @@ function getLinkedFormIdField(process) {
 
 
 function getAndValidateFields(proc) {
+    var cache = rpmUtil.getCache(proc);
     return promised.seq([
         function () {
-            return proc.getFields(true);
+            return cache.fields && proc._api.getModifiedAspects();
+        },
+        function (modified) {
+            if (!modified || modified.contains('ProcFields')) {
+                return proc.getFields(true);
+            }
         },
         function (fields) {
+            if (!fields) {
+                return cache.fields;
+            }
             fields = fields.Fields;
             var linkedIdFieldName = getLinkedFormIdField(proc);
             var srcLinkedIdFld = fields[linkedIdFieldName];
@@ -119,6 +128,7 @@ function getAndValidateFields(proc) {
                 return;
             }
             delete fields[linkedIdFieldName];
+            cache.fields = fields;
             return fields;
         }
     ]);

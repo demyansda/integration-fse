@@ -17,7 +17,6 @@ function updateSubscriptionInfo() {
             return api.getInfo();
         },
         function (info) {
-            console.log('info', info);
             api.instance = info.RPM;
             api.subscriber = info.SubscriberID;
         }
